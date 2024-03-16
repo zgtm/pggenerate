@@ -223,7 +223,43 @@ fn run() -> Result<(), postgres::Error> {
             if column_info.value_nullable || column_info.value_default {
                 columns.push((column.clone(), None));
             } else {
-                let value: Box<(dyn postgres::types::ToSql + Sync)> =
+                if let Some((ftable, fcolumn)) = &column_info.foreign_key {
+                    let count: i64 = client.query(&format!("select count(*) from {};", ftable), &[])
+                        .unwrap()
+                        .into_iter()
+                        .map(|row| row.get::<_, i64>(0))
+                        .next()
+                        .unwrap();
+
+                    let value: Box<(dyn postgres::types::ToSql + Sync)> =
+                        match &column_info.value_type {
+                            Type::Int8 => {
+                                let id: i64 = client.query(&format!("select {} from {} limit 1 offset {};", fcolumn, ftable, rng.gen_range(0..count)), &[])
+                                    .unwrap()
+                                    .into_iter()
+                                    .map(|row| row.get::<_, i64>(0))
+                                    .next()
+                                    .unwrap();
+                                Box::new(id)
+                            },
+                            Type::Text => {
+                                let id: String = client.query(&format!("select {} from {} limit 1 offset {};", fcolumn, ftable, rng.gen_range(0..count)), &[])
+                                    .unwrap()
+                                    .into_iter()
+                                    .map(|row| row.get::<_, String>(0))
+                                    .next()
+                                    .unwrap();
+                                Box::new(id)
+
+                            },
+                            _ => panic!("Foreign keys only supported of type int8 and text!"),
+                        };
+
+                    counter += 1;
+                    columns.push((column.clone(), Some((counter, value))));
+                }
+                else {
+                    let value: Box<(dyn postgres::types::ToSql + Sync)> =
                     match &column_info.value_type {
                         Type::Bool => Box::new(false),
                         Type::Int4 => Box::new(0 as i32),
@@ -235,14 +271,15 @@ fn run() -> Result<(), postgres::Error> {
                         Type::Enum(values) => Box::new(TypedString {value: values[0].clone()}),
                         Type::Array(_) => Box::new(0),
                     };
-                counter += 1;
-                columns.push((column.clone(), Some((counter, value))));
-            }
 
+                    counter += 1;
+                    columns.push((column.clone(), Some((counter, value))));
+                }
+            }
         }
 
         let column_names = columns.iter()
-            .map(|(name, _)| name.clone())
+            .map(|(name, _)| format!("\"{}\"", name))
             .collect::<Vec<String>>();
 
         let column_ids = columns.iter()
@@ -256,7 +293,7 @@ fn run() -> Result<(), postgres::Error> {
         let column_vals_refs = column_vals.iter()
             .map(Box::as_ref).collect::<Vec<&(dyn postgres::types::ToSql + Sync)>>();
 
-        let insertion = format!("INSERT INTO {} ({}) VALUES ({})", random_table, column_names.join(", "), column_ids.join(", "));
+        let insertion = format!("INSERT INTO \"{}\" ({}) VALUES ({})", random_table, column_names.join(", "), column_ids.join(", "));
 
         println!("{}", insertion);
         println!("{:?}", &column_vals_refs[0..]);
