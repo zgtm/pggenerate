@@ -179,9 +179,79 @@ fn run() -> Result<(), postgres::Error> {
         }
     }
 
-    println!("{:#?}", db);
+//    println!("{:#?}", db);
 
-    Ok(())
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let mut insertions = 0;
+
+    loop {
+        let random_table = &db.table_names[rng.gen_range(0..db.table_names.len())];
+        println!("Creating new row for table: {}", random_table);
+
+        let mut columns: Vec<(String, Option<(i32, Box<(dyn postgres::types::ToSql + Sync)>)>)> = Vec::new();
+        let mut counter = 0;
+
+        for column in &db.tables[random_table].column_names {
+            println!("  {}", column);
+
+            let name = column;
+            let column_info = &db.tables[random_table].columns[column];
+
+            if column_info.value_nullable || column_info.value_default {
+                columns.push((column.clone(), None));
+            } else {
+                let value: Box<(dyn postgres::types::ToSql + Sync)> =
+                    match &column_info.value_type {
+                        Type::Bool => Box::new(false),
+                        Type::Int4 => Box::new(0 as i32),
+                        Type::Int8 => Box::new(0 as i64),
+                        Type::Text => Box::new("blub".to_string()),
+                        Type::ByteArray => Box::new("blub".to_string()),
+                        Type::JSON => Box::new("{}"),
+                        Type::Timestamp => Box::new(0),
+                        Type::Enum(values) => Box::new(values[0].clone()),
+                        Type::Array(_) => Box::new(0),
+                    };
+                counter += 1;
+                columns.push((column.clone(), Some((counter, value))));
+            }
+
+        }
+
+        let column_names = columns.iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<String>>();
+
+        let column_ids = columns.iter()
+            .map(|(_, idval)| if let Some((id, _)) = idval {format!("${}", id)} else {"DEFAULT".to_string()})
+            .collect::<Vec<String>>();
+
+        let column_vals = columns.into_iter()
+            .filter_map(|(_, idval)| idval.map(|(_, val)| val))
+            .collect::<Vec<Box<(dyn postgres::types::ToSql + Sync)>>>();
+
+        let column_vals_refs = column_vals.iter()
+            .map(Box::as_ref).collect::<Vec<&(dyn postgres::types::ToSql + Sync)>>();
+
+        let insertion = format!("INSERT INTO {} ({}) VALUES ({})", random_table, column_names.join(", "), column_ids.join(", "));
+
+        println!("{}", insertion);
+        println!("{:?}", &column_vals_refs[0..]);
+
+        let res = client.execute(
+            &insertion,
+            &column_vals_refs[0..],
+        );
+
+        match res {
+            Ok(_) => insertions += 1,
+            Err(e) => println!("{}", e),
+        }
+        println!("{}", insertions);
+    }
+
+//    Ok(())
 }
 
 
