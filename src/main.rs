@@ -1,5 +1,26 @@
 use postgres::{Client, NoTls};
 use std::collections::BTreeMap;
+use time::{OffsetDateTime};
+
+use postgres::types::{ToSql, to_sql_checked};
+
+#[derive(Debug)]
+pub struct TypedString {
+    pub value: String,
+}
+
+impl ToSql for TypedString {
+    fn to_sql(&self, ty: &postgres::types::Type, out: &mut postgres::types::private::BytesMut) -> Result<postgres::types::IsNull, Box<dyn std::error::Error + Send + Sync>> {
+        self.value.to_sql(ty, out)
+    }
+
+    fn accepts(ty: &postgres::types::Type) -> bool {
+        true
+    }
+
+    to_sql_checked!();
+}
+
 
 #[derive(Debug)]
 enum Type {
@@ -187,6 +208,7 @@ fn run() -> Result<(), postgres::Error> {
 
     loop {
         let random_table = &db.table_names[rng.gen_range(0..db.table_names.len())];
+        if random_table == "schema_migrations" {continue}
         println!("Creating new row for table: {}", random_table);
 
         let mut columns: Vec<(String, Option<(i32, Box<(dyn postgres::types::ToSql + Sync)>)>)> = Vec::new();
@@ -209,8 +231,8 @@ fn run() -> Result<(), postgres::Error> {
                         Type::Text => Box::new("blub".to_string()),
                         Type::ByteArray => Box::new("blub".to_string()),
                         Type::JSON => Box::new("{}"),
-                        Type::Timestamp => Box::new(0),
-                        Type::Enum(values) => Box::new(values[0].clone()),
+                        Type::Timestamp => Box::new(OffsetDateTime::now_utc()),
+                        Type::Enum(values) => Box::new(TypedString {value: values[0].clone()}),
                         Type::Array(_) => Box::new(0),
                     };
                 counter += 1;
