@@ -98,7 +98,7 @@ struct Database {
 
 struct InsertInformation {
     table: String,
-    data: Vec<(String, Option<(i32, Box<(dyn postgres::types::ToSql + Sync)>)>)>,
+    data: Vec<(String, Option<(i32, Box<(dyn postgres::types::ToSql + Sync)>, Option<String>)>)>,
 }
 
 fn rand_int() -> i32 {
@@ -136,7 +136,7 @@ fn rand_str() -> String {
 impl Database {
     fn insert_in_table(&self, client: &mut postgres::Transaction, table: &str, set_column: Option<(&str, Value)>, return_column: Option<&str>) -> Result<Option<Value>, postgres::Error> {
         let mut rng = rand::thread_rng();
-        let mut data: Vec<(String, Option<(i32, Box<(dyn postgres::types::ToSql + Sync)>)>)> = Vec::new();
+        let mut data: Vec<(String, Option<(i32, Box<(dyn postgres::types::ToSql + Sync)>, Option<String>)>)> = Vec::new();
 
         let mut counter = 0;
         for column in &self.tables[table].column_names {
@@ -146,7 +146,7 @@ impl Database {
 
             if set_column.is_some() && &set_column.as_ref().unwrap().0 == column {
                 counter += 1;
-                data.push((column.clone(), Some((counter, Box::new(set_column.as_ref().unwrap().1.clone())))));
+                data.push((column.clone(), Some((counter, Box::new(set_column.as_ref().unwrap().1.clone()), None))));
             } else if column_info.value_nullable && 0 == rng.gen_range(0..3) {
                 data.push((column.clone(), None));
             }
@@ -186,7 +186,7 @@ impl Database {
                         };
 
                     counter += 1;
-                    data.push((column.clone(), Some((counter, value))));
+                    data.push((column.clone(), Some((counter, value, None))));
                 }
                 else {
                     let value: Box<(dyn postgres::types::ToSql + Sync)> =
@@ -203,7 +203,7 @@ impl Database {
                     };
 
                     counter += 1;
-                    data.push((column.clone(), Some((counter, value))));
+                    data.push((column.clone(), Some((counter, value, if let Type::JSON = column_info.value_type {Some("JSON".to_string())} else {None}))));
                 }
             }
         }
@@ -218,11 +218,14 @@ impl Database {
             .collect::<Vec<String>>();
 
         let column_ids = infos.data.iter()
-            .map(|(_, idval)| if let Some((id, _)) = idval {format!("${}", id)} else {"DEFAULT".to_string()})
+            .map(|(_, idval)|
+                 if let Some((id, _, Some(typespecifier))) = idval {format!("${}::typespecifier", id)}
+                 else if let Some((id, _, None)) = idval {format!("${}", id)}
+                 else {"DEFAULT".to_string()})
             .collect::<Vec<String>>();
 
         let column_vals = infos.data.into_iter()
-            .filter_map(|(_, idval)| idval.map(|(_, val)| val))
+            .filter_map(|(_, idval)| idval.map(|(_, val, _)| val))
             .collect::<Vec<Box<(dyn postgres::types::ToSql + Sync)>>>();
 
         let column_vals_refs = column_vals.iter()
